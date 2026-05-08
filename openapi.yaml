@@ -1,0 +1,477 @@
+openapi: 3.0.3
+info:
+  title: ADS — Anomaly Detection System API
+  version: 1.0.0
+  description: |
+    REST API системи автоматичного виявлення аномалій у web-сервісах на основі
+    методів машинного навчання (Isolation Forest + LSTM-Autoencoder + SHAP).
+
+    Розроблено в рамках кваліфікаційної роботи зі спеціальності 122 «Комп'ютерні науки».
+    Запорізький національний університет, 2025.
+  contact:
+    name: Пазинич Катерина
+    email: katepaz@gmail.com
+  license:
+    name: MIT
+
+servers:
+  - url: https://api.ads.example.com/v1
+    description: Production server
+  - url: http://localhost:8000/v1
+    description: Local development server
+
+tags:
+  - name: Status
+    description: Стан системи та версія моделі
+  - name: Anomalies
+    description: Виявлені аномалії та SHAP-пояснення
+  - name: Metrics
+    description: Метрики якості ML-моделей
+  - name: Feedback
+    description: Зворотний зв'язок від аналітика (TP/FP)
+  - name: Training
+    description: Управління навчанням та перенавчанням моделі
+
+paths:
+  # ── Status ──────────────────────────────────────────────────────────────────
+
+  /status:
+    get:
+      tags: [Status]
+      operationId: getStatus
+      summary: Стан системи
+      description: Повертає поточний стан детектора, версію моделі та час останнього навчання.
+      security: []
+      responses:
+        "200":
+          description: Успішно
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemStatus"
+              example:
+                status: healthy
+                model_version: "2025-04-01T06:00:00Z"
+                detector_mode: ensemble
+                uptime_seconds: 86400
+                last_trained_at: "2025-04-01T06:00:00Z"
+                events_processed_total: 4320000
+
+  # ── Anomalies ────────────────────────────────────────────────────────────────
+
+  /anomalies:
+    get:
+      tags: [Anomalies]
+      operationId: listAnomalies
+      summary: Список виявлених аномалій
+      description: Повертає пагінований список аномалій з фільтрацією за часом та severity.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          description: Початок часового діапазону (ISO 8601)
+          schema:
+            type: string
+            format: date-time
+          example: "2025-04-01T00:00:00Z"
+        - name: to
+          in: query
+          description: Кінець часового діапазону (ISO 8601)
+          schema:
+            type: string
+            format: date-time
+        - name: severity
+          in: query
+          description: Фільтр за рівнем серйозності
+          schema:
+            type: string
+            enum: [low, medium, high, critical]
+        - name: anomaly_type
+          in: query
+          description: Тип аномалії
+          schema:
+            type: string
+            enum: [point, contextual, collective]
+        - name: service
+          in: query
+          description: Назва сервісу
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Список аномалій
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AnomalySummary"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /anomalies/{anomalyId}:
+    get:
+      tags: [Anomalies]
+      operationId: getAnomaly
+      summary: Деталі аномалії з SHAP-поясненням
+      description: Повертає повну інформацію про аномалію, включаючи топ-5 ознак SHAP.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: anomalyId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "anom-20250401-143211-001"
+      responses:
+        "200":
+          description: Деталі аномалії
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnomalyDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Metrics ──────────────────────────────────────────────────────────────────
+
+  /metrics/quality:
+    get:
+      tags: [Metrics]
+      operationId: getQualityMetrics
+      summary: Метрики якості ML-моделей
+      description: |
+        Повертає precision, recall, F1-score та FPR за вказаний період.
+        Обчислюється на основі feedback від аналітиків.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: period
+          in: query
+          description: Період агрегації
+          schema:
+            type: string
+            enum: [day, week, month]
+            default: week
+      responses:
+        "200":
+          description: Метрики якості
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QualityMetrics"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ── Feedback ─────────────────────────────────────────────────────────────────
+
+  /feedback:
+    post:
+      tags: [Feedback]
+      operationId: submitFeedback
+      summary: Надіслати feedback аналітика
+      description: |
+        Аналітик SOC позначає аномалію як true positive або false positive.
+        Накопичений feedback використовується для коригування ваг ансамблю.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FeedbackRequest"
+            example:
+              anomaly_id: "anom-20250401-143211-001"
+              label: true_positive
+              comment: "Підтверджено: slowloris-атака з 10.0.0.42"
+      responses:
+        "201":
+          description: Feedback прийнято
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Feedback recorded"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Training ─────────────────────────────────────────────────────────────────
+
+  /training/retrain:
+    post:
+      tags: [Training]
+      operationId: triggerRetrain
+      summary: Запустити перенавчання моделі
+      description: |
+        Запускає асинхронне перенавчання ансамблю на свіжих даних.
+        Новий checkpoint активується після успішного завершення.
+      security:
+        - BearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                days_lookback:
+                  type: integer
+                  description: Кількість діб для навчальної вибірки
+                  default: 30
+                  minimum: 7
+                  maximum: 90
+      responses:
+        "202":
+          description: Задачу перенавчання поставлено в чергу
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task_id:
+                    type: string
+                    example: "train-20250401-060000"
+                  status:
+                    type: string
+                    example: queued
+                  estimated_duration_minutes:
+                    type: integer
+                    example: 45
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Навчання вже виконується
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+# ── Components ───────────────────────────────────────────────────────────────
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT токен для доступу до захищених ендпоінтів
+
+  schemas:
+    SystemStatus:
+      type: object
+      required: [status, model_version, detector_mode]
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, down]
+        model_version:
+          type: string
+          format: date-time
+        detector_mode:
+          type: string
+          enum: [ensemble, isolation_forest_only, lstm_ae_only]
+        uptime_seconds:
+          type: integer
+        last_trained_at:
+          type: string
+          format: date-time
+        events_processed_total:
+          type: integer
+          format: int64
+
+    AnomalySummary:
+      type: object
+      required: [anomaly_id, detected_at, anomaly_score, severity, anomaly_type]
+      properties:
+        anomaly_id:
+          type: string
+          example: "anom-20250401-143211-001"
+        detected_at:
+          type: string
+          format: date-time
+        anomaly_score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: Зважений score ансамблю (0 = норма, 1 = аномалія)
+        threshold:
+          type: number
+          format: float
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+        anomaly_type:
+          type: string
+          enum: [point, contextual, collective]
+        affected_service:
+          type: string
+        feedback_label:
+          type: string
+          enum: [true_positive, false_positive, unreviewed]
+          default: unreviewed
+
+    AnomalyDetail:
+      allOf:
+        - $ref: "#/components/schemas/AnomalySummary"
+        - type: object
+          properties:
+            window_start:
+              type: string
+              format: date-time
+            window_end:
+              type: string
+              format: date-time
+            detectors:
+              type: object
+              properties:
+                isolation_forest_score:
+                  type: number
+                  format: float
+                lstm_ae_reconstruction_error:
+                  type: number
+                  format: float
+            shap_explanation:
+              type: object
+              properties:
+                top_features:
+                  type: array
+                  maxItems: 5
+                  items:
+                    type: object
+                    required: [feature, shap_value]
+                    properties:
+                      feature:
+                        type: string
+                        example: "error_rate_5m"
+                      shap_value:
+                        type: number
+                        format: float
+                        example: 0.34
+                      feature_value:
+                        type: number
+                        format: float
+                        example: 0.087
+
+    QualityMetrics:
+      type: object
+      properties:
+        period:
+          type: string
+          enum: [day, week, month]
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        total_anomalies:
+          type: integer
+        reviewed_anomalies:
+          type: integer
+        precision:
+          type: number
+          format: float
+        recall:
+          type: number
+          format: float
+        f1_score:
+          type: number
+          format: float
+        false_positive_rate:
+          type: number
+          format: float
+
+    FeedbackRequest:
+      type: object
+      required: [anomaly_id, label]
+      properties:
+        anomaly_id:
+          type: string
+        label:
+          type: string
+          enum: [true_positive, false_positive]
+        comment:
+          type: string
+          maxLength: 500
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+        total_pages:
+          type: integer
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+
+  responses:
+    Unauthorized:
+      description: Відсутній або невалідний JWT токен
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: UNAUTHORIZED
+            message: "Bearer token is missing or invalid"
+
+    NotFound:
+      description: Ресурс не знайдено
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: NOT_FOUND
+            message: "Anomaly not found"
+
+    BadRequest:
+      description: Некоректні параметри запиту
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: BAD_REQUEST
+            message: "Invalid anomaly_id format"
