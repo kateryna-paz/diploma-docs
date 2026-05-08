@@ -3,11 +3,6 @@ import type { ZudokuConfig } from "zudoku";
 const config: ZudokuConfig = {
   basePath: "/diploma-docs",
 
-  redirects: [
-    { from: "/", to: "/diploma-docs/tz/overview" },
-    { from: "/undefined", to: "/diploma-docs/tz/overview" },
-  ],
-
   metadata: {
     title: "ADS — Документація дипломної роботи",
     description:
