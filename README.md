@@ -45,19 +45,6 @@ npm run dev
 
 ---
 
-## Деплой на GitHub Pages
-
-Документація автоматично публікується на GitHub Pages при кожному push до гілки `main`.
-
-**Налаштування (одноразово):**
-
-1. Перейдіть у **Settings → Pages** репозиторію
-2. У полі **Source** оберіть **GitHub Actions**
-3. Виконайте push до `main`
-   **Live URL:** `https://kateryna-paz.github.io/diploma-docs/`
-
----
-
 ## License
 
 MIT — Pazynych Kateryna
